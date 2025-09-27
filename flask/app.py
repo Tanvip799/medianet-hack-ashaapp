@@ -23,8 +23,12 @@ def transcribe():
         return jsonify({'error': 'No audio file provided'}), 400
 
     audio_file = request.files['audio']
+    original_filename = audio_file.filename or 'audio.m4a'
+    mimetype = getattr(audio_file, 'mimetype', None) or 'audio/m4a'
+    _, ext = os.path.splitext(original_filename)
+    ext = ext if ext else '.m4a'
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
         audio_path = tmp.name
         audio_file.save(audio_path)
 
@@ -33,9 +37,13 @@ def transcribe():
             response = requests.post(
                 GROQ_API_URL,
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-                files={"file": f},
-                data={"model": "whisper-large-v3"},
-                timeout=30000
+                files={"file": (original_filename, f, mimetype)},
+                data={
+                    "model": "whisper-large-v3"
+                    # Note: Do NOT send language="auto"; omit 'language' to let the model auto-detect.
+                    # If you want to force a language, set e.g. "language": "hi" (Hindi) or "en" (English)
+                },
+                timeout=30
             )
 
         if response.status_code != 200:
