@@ -24,8 +24,8 @@ const getBaseUrl = () => {
   const env = (process.env as any)?.EXPO_PUBLIC_API_URL as string | undefined;
   if (env) return env;
   // Use your actual local IP address
-  if (Platform.OS === 'android') return 'http://192.168.29.172:3000';
-  return 'http://192.168.29.172:3000';
+  if (Platform.OS === 'android') return 'http://172.16.146.121:3000';
+  return 'http://172.16.146.121:3000';
 };
 const API_BASE = getBaseUrl();
 const TRANSCRIPTION_API = API_BASE.replace(':3000', ':5000');

@@ -1,0 +1,72 @@
+[
+  {
+    "name": "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana (AB-PMJAY)",
+    "description": "The world's largest government-funded health assurance scheme covers over 10 crore poor and vulnerable families for secondary and tertiary care hospitalization.",
+    "target_group": "Poor and vulnerable families are identified based on SECC 2011 data and existing RSBY beneficiaries.",
+    "benefits": "It provides a health cover of up to INR 5 lakhs per family per year for cashless hospitalization, covering over 1,949 medical packages.",
+    "how_to_apply": "Beneficiaries are automatically identified, and eligibility can be checked online or by calling the national helpline 14555/1800-111-565."
+  },
+  {
+    "name": "Ayushman Bharat Health and Wellness Centres (AB-HWCs)",
+    "description": "This initiative transforms existing health centres into AB-HWCs to provide comprehensive primary health care (CPHC) closer to the community.",
+    "target_group": "The target group is the entire population, focusing on delivering primary healthcare services to rural and urban communities.",
+    "benefits": "It offers free universal access to CPHC services, including NCD care and free essential medicines and diagnostics.",
+    "how_to_apply": "Services are provided directly at the local AB-HWC; no formal application process is required for primary care services."
+  },
+  {
+    "name": "Pradhan Mantri Bhartiya Janaushadhi Pariyojana (PMBJP)",
+    "description": "This campaign provides quality generic medicines at affordable prices to the masses through dedicated Jan Aushadhi Kendras.",
+    "target_group": "The target group is all citizens seeking affordable and quality generic medicines.",
+    "benefits": "It provides access to over 1,800 generic medicines and surgical instruments at significantly lower prices (50-90% less) than branded options.",
+    "how_to_apply": "Medicines can be purchased directly from any Pradhan Mantri Bhartiya Janaushadhi Kendra by presenting a valid prescription."
+  },
+  {
+    "name": "Janani Shishu Suraksha Karyakram (JSSK)",
+    "description": "This initiative eliminates out-of-pocket expenses for pregnant women and sick newborns accessing public health institutions to ensure safe motherhood and child survival.",
+    "target_group": "The target group includes all pregnant women delivering in public health institutions and sick newborns up to one year of age.",
+    "benefits": "It provides free delivery (including C-section), essential drugs, diagnostics, blood, diet, and transport services.",
+    "how_to_apply": "Benefits are automatically provided to eligible beneficiaries at public health facilities; no separate application is required."
+  },
+  {
+    "name": "Rashtriya Bal Swasthya Karyakram (RBSK)",
+    "description": "This is a child health screening and early intervention service program for children from birth to 18 years of age under the National Health Mission (NHM).",
+    "target_group": "The target group is children from birth to 18 years, including newborns, infants, pre-school, and school-going children.",
+    "benefits": "It provides comprehensive screening for 4 D's (Defects, Deficiencies, Diseases, and Developmental delays), with free treatment and referrals.",
+    "how_to_apply": "Screening is conducted by Mobile Health Teams at anganwadis and schools, and parents can also approach public health facilities."
+  },
+  {
+    "name": "National Health Mission (NHM)",
+    "description": "This umbrella program aims to achieve universal access to equitable, affordable, and quality healthcare services.",
+    "target_group": "The target group is the entire population, focusing on rural and urban poor, vulnerable sections, women, and children.",
+    "benefits": "It strengthens public health infrastructure, improves access to MCH services, controls diseases, and provides free essential drugs and diagnostics.",
+    "how_to_apply": "Benefits are accessed via public health facilities (Sub-Centres, PHCs, CHCs, District Hospitals) and community health workers (ASHA)."
+  },
+  {
+    "name": "National TB Elimination Programme (NTEP)",
+    "description": "A national program aimed at eliminating Tuberculosis from India by 2025 by providing free diagnosis and treatment services to all affected individuals.",
+    "target_group": "The target group is all individuals suspected of or diagnosed with Tuberculosis (TB).",
+    "benefits": "It offers free diagnosis, free anti-TB drugs, nutritional support (Nikshay Poshan Yojana) of INR 500 per month, and follow-up care.",
+    "how_to_apply": "Individuals with TB symptoms should visit the nearest government health facility or designated microscopy centre for free testing and treatment."
+  },
+  {
+    "name": "National AIDS Control Programme (NACP)",
+    "description": "A comprehensive program to prevent new HIV infections and provide care, support, and treatment to people living with HIV (PLHIV).",
+    "target_group": "The target group includes the general population for prevention, high-risk groups (HRGs), pregnant women, and people living with HIV (PLHIV).",
+    "benefits": "It provides free HIV testing and counselling, free Anti-Retroviral Treatment (ART), prevention of parent-to-child transmission (PPTCT) services, and extensive awareness campaigns.",
+    "how_to_apply": "Services are available at Integrated Counselling and Testing Centres (ICTCs), ART Centres, and designated health facilities nationwide."
+  },
+  {
+    "name": "Employees' State Insurance Scheme (ESIS)",
+    "description": "A social security and health insurance scheme providing comprehensive medical care and cash benefits to organized sector workers.",
+    "target_group": "Employees in establishments with 10 or more persons earning up to INR 21,000 per month (or INR 25,000 for persons with disability).",
+    "benefits": "It includes comprehensive medical care for the insured person and family, sickness benefit, maternity benefit, and disablement benefit.",
+    "how_to_apply": "Employers are responsible for registering eligible employees with ESIC; beneficiaries receive an ESI card to avail services."
+  },
+  {
+    "name": "Central Government Health Scheme (CGHS)",
+    "description": "A healthcare scheme providing comprehensive medical care facilities to central government employees, pensioners, and certain other categories.",
+    "target_group": "Central Government employees (serving and retired), MPs, Judges, Journalists, and their dependents in CGHS covered cities.",
+    "benefits": "It offers outpatient and inpatient care, specialist consultation, supply of medicines, and investigations through CGHS facilities and empaneled hospitals.",
+    "how_to_apply": "Eligible individuals apply for a CGHS card through their respective departments or the CGHS portal to access services."
+  }
+]

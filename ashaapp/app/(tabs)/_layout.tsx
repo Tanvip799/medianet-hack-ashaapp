@@ -47,9 +47,9 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="appointments"
+        name="schemes"
         options={{
-          title: 'Appointments',
+          title: 'Schemes',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="calendar" color={color} />,
         }}
       />
@@ -64,6 +64,13 @@ export default function TabLayout() {
         name="notifications"
         options={{
           title: 'Notifications',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'Chat2',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell" color={color} />,
         }}
       />
