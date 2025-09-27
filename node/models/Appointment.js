@@ -7,6 +7,8 @@ const AppointmentSchema = new Schema(
     name: { type: String, required: true, trim: true },
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     desc: { type: String, trim: true },
+    // Short, free-form note captured via quick-add or voice
+    notes: { type: String, trim: true },
     status: { type: String, enum: ['scheduled', 'completed', 'cancelled', 'missed', 'pending'], default: 'scheduled', index: true },
     date: { type: Date, required: true, index: true },
     doctor: { type: String, trim: true },

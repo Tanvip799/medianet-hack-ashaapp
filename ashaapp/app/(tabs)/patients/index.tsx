@@ -44,7 +44,7 @@ const getBaseUrl = () => {
   const env = (process.env as any).EXPO_PUBLIC_API_URL as string | undefined;
   if (env) return env;
   // Use a placeholder IP, as this will vary for each user's network.
-  const API_HOST = '192.168.29.172'; // <-- IMPORTANT: Change this to your local network IP
+  const API_HOST = '172.16.146.125'; // <-- IMPORTANT: Change this to your local network IP
   return `http://${API_HOST}:3000`;
 };
 

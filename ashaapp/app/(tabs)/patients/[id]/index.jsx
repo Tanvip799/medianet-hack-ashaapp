@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, View, TouchableOpacity, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
+import { WebView } from 'react-native-webview';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 // --- Constants ---
 const STATUS_OPTIONS = ['scheduled', 'completed', 'cancelled', 'missed', 'pending'];
@@ -15,8 +16,8 @@ const getBaseUrl = () => {
     const env = (process.env || {}).EXPO_PUBLIC_API_URL;
     if (env) return env;
     // Note: The IP below is based on your original code. You may need to change it for your network.
-    if (Platform.OS === 'android') return 'http://192.168.29.172:3000';
-    return 'http://192.168.29.172:3000';
+    if (Platform.OS === 'android') return 'http://172.16.146.125:3000';
+    return 'http://172.16.146.125:3000';
 };
 const API_BASE = getBaseUrl();
 const TRANSCRIPTION_API = API_BASE.replace(':3000', ':5000');
@@ -47,12 +48,12 @@ const getStatusTextStyle = (status) => {
 
 
 // --- Reusable Appointment Card Component ---
-const AppointmentCard = ({ appointment, onEdit, onDelete, onToggleStatus }) => {
+const AppointmentCard = ({ appointment, onEdit, onDelete, onToggleStatus, onAddNote, onPress }) => {
     const isCompleted = appointment.status === 'completed';
     const statusTextStyle = getStatusTextStyle(appointment.status);
 
     return (
-        <View style={styles.card}>
+        <TouchableOpacity style={styles.card} activeOpacity={0.9} onPress={() => onPress?.(appointment)}>
             {/* 1. Left Icon Pane */}
             <View style={styles.cardLeftPane}>
                  <MaterialCommunityIcons name="doctor" size={28} color="#0a7ea4" />
@@ -88,12 +89,15 @@ const AppointmentCard = ({ appointment, onEdit, onDelete, onToggleStatus }) => {
                             color={isCompleted ? '#64748B' : '#16A34A'}
                         />
                     </Pressable>
+                    <Pressable onPress={() => onAddNote?.(appointment)} hitSlop={10} style={styles.actionIconBtn}>
+                        <Ionicons name="add-circle" size={26} color="#0a7ea4" />
+                    </Pressable>
                     <Pressable onPress={() => onDelete?.(appointment)} hitSlop={10} style={styles.actionIconBtn}>
                         <Ionicons name="trash-outline" size={22} color="#dc2626" />
                     </Pressable>
                 </View>
             </View>
-        </View>
+        </TouchableOpacity>
     );
 };
 
@@ -101,6 +105,7 @@ const AppointmentCard = ({ appointment, onEdit, onDelete, onToggleStatus }) => {
 // --- Main Screen Component ---
 export default function PatientDetailsScreen() {
     const params = useLocalSearchParams();
+    const router = useRouter();
     const id = useMemo(() => (Array.isArray(params.id) ? params.id[0] : params.id), [params]);
 
     const [loading, setLoading] = useState(true);
@@ -133,6 +138,29 @@ export default function PatientDetailsScreen() {
     const [voiceSelectedPatient, setVoiceSelectedPatient] = useState(null); // {_id, name}
     const [showPatientPicker, setShowPatientPicker] = useState(false);
     const [patientQuery, setPatientQuery] = useState('');
+
+    // Quick Note state (per-appointment)
+    const [noteModalVisible, setNoteModalVisible] = useState(false);
+    const [noteForAppt, setNoteForAppt] = useState(null);
+    const [noteText, setNoteText] = useState('');
+    const [noteIsRecording, setNoteIsRecording] = useState(false);
+    const [noteRecording, setNoteRecording] = useState(null);
+    const [noteIsTranscribing, setNoteIsTranscribing] = useState(false);
+    const [noteSaving, setNoteSaving] = useState(false);
+
+    // Plans (bulk schedule) state
+    const [planModalVisible, setPlanModalVisible] = useState(false);
+    const [planApplying, setPlanApplying] = useState(false);
+
+    // Report preview state (in-app only)
+    const [reportPreviewVisible, setReportPreviewVisible] = useState(false);
+    const [reportHtml, setReportHtml] = useState('');
+
+    // Navigate to Notes screen for an appointment
+    const openApptNotes = (appt) => {
+        if (!appt?._id) return;
+        router.push({ pathname: '/(tabs)/patients/[id]/notes', params: { id, apptId: appt._id } });
+    };
 
     // --- Form Handlers ---
     const openModal = () => {
@@ -220,6 +248,92 @@ export default function PatientDetailsScreen() {
         } catch (e) {
             console.error('Toggle status failed:', e?.message);
             Alert.alert('Error', 'Failed to update status');
+        }
+    };
+
+    // --- Quick Note handlers ---
+    const openNoteModal = (appt) => {
+        setNoteForAppt(appt);
+        setNoteText(typeof appt?.notes === 'string' ? appt.notes : '');
+        setNoteModalVisible(true);
+    };
+    const closeNoteModal = () => {
+        if (noteIsRecording && noteRecording) {
+            try { noteRecording.stopAndUnloadAsync(); } catch {}
+        }
+        setNoteIsRecording(false);
+        setNoteRecording(null);
+        setNoteIsTranscribing(false);
+        setNoteModalVisible(false);
+    };
+    const startNoteRecording = async () => {
+        try {
+            const { status } = await Audio.requestPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission denied', 'Microphone permission is required.');
+                return;
+            }
+            await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+            setNoteIsRecording(true);
+            const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            setNoteRecording(recording);
+        } catch (err) {
+            console.error('Failed to start note recording', err);
+            Alert.alert('Error', 'Could not start recording.');
+            setNoteIsRecording(false);
+        }
+    };
+    const stopAndTranscribeNote = async () => {
+        if (!noteRecording) return;
+        setNoteIsRecording(false);
+        try { await noteRecording.stopAndUnloadAsync(); } catch {}
+        const uri = noteRecording.getURI();
+        setNoteRecording(null);
+        if (!uri) {
+            Alert.alert('Error', 'No audio captured.');
+            return;
+        }
+        try {
+            setNoteIsTranscribing(true);
+            const formData = new FormData();
+            formData.append('audio', { uri, name: 'note-voice.m4a', type: 'audio/m4a' });
+            const res = await fetch(`${TRANSCRIPTION_API}/transcribe`, { method: 'POST', body: formData });
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Server error: ${res.status} ${errText}`);
+            }
+            const result = await res.json();
+            const transcript = (result && (result.transcript || result.text)) || '';
+            if (typeof transcript === 'string' && transcript.trim()) {
+                setNoteText(prev => prev ? `${prev.trim()} ${transcript.trim()}` : transcript.trim());
+            } else {
+                Alert.alert('No transcript', 'No text returned from server.');
+            }
+        } catch (e) {
+            console.error('Note transcription failed', e);
+            Alert.alert('Error', 'Failed to transcribe audio.');
+        } finally {
+            setNoteIsTranscribing(false);
+        }
+    };
+    const saveNote = async () => {
+        const apptId = noteForAppt?._id;
+        if (!apptId) { closeNoteModal(); return; }
+        setNoteSaving(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/appointments/${apptId}/notes`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notes: (noteText || '').toString() })
+            });
+            if (!res.ok) throw new Error(await res.text());
+            await loadAppointments();
+            closeNoteModal();
+        } catch (e) {
+            console.error('Save note failed', e?.message);
+            Alert.alert('Error', 'Failed to save note.');
+        } finally {
+            setNoteSaving(false);
         }
     };
 
@@ -454,6 +568,140 @@ export default function PatientDetailsScreen() {
     if (loading) { return <View style={styles.centered}><ActivityIndicator size="large" color="#0a7ea4" /></View>; }
     if (!patient) { return <View style={styles.centered}><ThemedText>Patient not found.</ThemedText></View>; }
 
+    // --- Report: Fixed HTML template (Patient name, all appointments with notes) ---
+    const buildReportHtml = () => {
+        const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const rows = (appts || [])
+            .slice()
+            .sort((a, b) => new Date(a.date) - new Date(b.date))
+            .map(a => `
+                <tr>
+                    <td>${new Date(a.date).toLocaleDateString('en-GB')}</td>
+                    <td>${(a.name || '').toString().replace(/</g,'&lt;')}</td>
+                    <td>${(a.status || '').toString()}</td>
+                    <td>${(a.desc || '').toString().replace(/</g,'&lt;')}</td>
+                    <td>${(a.notes || '').toString().replace(/</g,'&lt;')}</td>
+                </tr>
+            `).join('');
+        return `
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <meta charset="utf-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+                    <title>Patient Report</title>
+                    <style>
+                        body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: #0f172a; margin: 16px; font-size: 16px; }
+                        .header { display: flex; justify-content: space-between; align-items: center; }
+                        .title { font-size: 22px; font-weight: 700; }
+                        .meta { color: #475569; font-size: 13px; }
+                        .section { margin-top: 16px; }
+                        .section h2 { font-size: 18px; margin: 0 0 8px 0; }
+                        table { width: 100%; border-collapse: collapse; }
+                        th, td { border: 1px solid #e2e8f0; padding: 10px; font-size: 14px; vertical-align: top; }
+                        th { background: #f1f5f9; text-align: left; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <div class="title">Patient Report</div>
+                        <div class="meta">Generated on ${today}</div>
+                    </div>
+                    <div class="section">
+                        <h2>Patient</h2>
+                        <div><strong>Name:</strong> ${(patient?.name || '').toString().replace(/</g,'&lt;')}</div>
+                        ${patient?.village ? `<div><strong>Village:</strong> ${String(patient.village).replace(/</g,'&lt;')}</div>` : ''}
+                        ${patient?.contactNumber ? `<div><strong>Phone:</strong> ${String(patient.contactNumber).replace(/</g,'&lt;')}</div>` : ''}
+                    </div>
+                    <div class="section">
+                        <h2>Appointments</h2>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Title</th>
+                                    <th>Status</th>
+                                    <th>Description</th>
+                                    <th>Notes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows || ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </body>
+            </html>
+        `;
+    };
+
+    // Removed old external-open generate function to prefer in-app preview
+
+    // Open in-app report preview (HTML) without leaving the app
+    const openReportPreview = () => {
+        try {
+            const html = buildReportHtml();
+            setReportHtml(html);
+            setReportPreviewVisible(true);
+        } catch (_e) {
+            Alert.alert('Error', 'Unable to build report preview.');
+        }
+    };
+
+    // Download PDF from the preview HTML (no external open)
+    const downloadReportPdf = async () => {
+        try {
+            const html = reportHtml || buildReportHtml();
+            const Print = await import('expo-print');
+            const FileSystem = await import('expo-file-system/legacy');
+            const FS = await import('expo-file-system');
+            // request base64 for SAF writes
+            const tmp = await Print.printToFileAsync({ html, base64: true });
+            if (!tmp?.uri) throw new Error('Failed to create PDF');
+            const safeName = `${(patient?.name || 'Patient').toString().replace(/[^a-z0-9_\-]+/gi,'_')}`;
+            const dateStr = new Date().toISOString().slice(0,10);
+            const fileName = `PatientReport_${safeName}_${dateStr}.pdf`;
+            // Always save an HTML copy for in-app preview listing
+            const htmlDir = FileSystem.documentDirectory + 'reports/';
+            try { await FileSystem.makeDirectoryAsync(htmlDir, { intermediates: true }); } catch {}
+            const htmlName = `PatientReport_${safeName}_${dateStr}.html`;
+            try { await FileSystem.deleteAsync(htmlDir + htmlName, { idempotent: true }); } catch {}
+            await FileSystem.writeAsStringAsync(htmlDir + htmlName, html, { encoding: 'utf8' });
+
+            if (Platform.OS === 'android' && FS?.StorageAccessFramework) {
+                try {
+                    const perm = await FS.StorageAccessFramework.requestDirectoryPermissionsAsync();
+                    if (perm.granted) {
+                        const dirUri = perm.directoryUri;
+                        const fileUri = await FS.StorageAccessFramework.createFileAsync(dirUri, fileName, 'application/pdf');
+                        await FS.StorageAccessFramework.writeFileAsync(fileUri, tmp.base64 || '', { encoding: FS.EncodingType.Base64 });
+                        Alert.alert('Report saved', 'Saved to the selected folder.');
+                        return;
+                    }
+                    // fallthrough to app documents if not granted
+                } catch (safErr) {
+                    console.warn('SAF save failed:', safErr?.message);
+                }
+            }
+
+            // Fallback: save inside app documents
+            const dir = FileSystem.documentDirectory + 'reports/';
+            try { await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
+            const dest = `${dir}${fileName}`;
+            try { await FileSystem.deleteAsync(dest, { idempotent: true }); } catch {}
+            await FileSystem.moveAsync({ from: tmp.uri, to: dest });
+            Alert.alert('Report saved', `Saved to: ${dest}`);
+        } catch (e) {
+            const msg = (e && e.message) || String(e);
+            if (msg && (msg.includes('expo-print') || msg.includes('expo-file-system') || msg.includes('Cannot find module'))) {
+                Alert.alert('Missing dependency', 'Please install: expo install expo-print expo-file-system');
+                return;
+            }
+            console.error('Report download failed:', msg);
+            Alert.alert('Error', 'Failed to save report.');
+        }
+    };
+
     // --- Main Render ---
     return (
         <ThemedView style={styles.container}>
@@ -471,6 +719,8 @@ export default function PatientDetailsScreen() {
                 </View>
             </View>
 
+            
+
             <View style={styles.tabContainer}>
                 <TouchableOpacity onPress={() => setActiveTab('Details')} style={[styles.tabButton, activeTab === 'Details' && styles.tabButtonActive]}><ThemedText style={[styles.tabText, activeTab === 'Details' && styles.tabTextActive]}>Details</ThemedText></TouchableOpacity>
                 <TouchableOpacity onPress={() => setActiveTab('Appointments')} style={[styles.tabButton, activeTab === 'Appointments' && styles.tabButtonActive]}><ThemedText style={[styles.tabText, activeTab === 'Appointments' && styles.tabTextActive]}>Appointments</ThemedText></TouchableOpacity>
@@ -481,20 +731,31 @@ export default function PatientDetailsScreen() {
                     <>
                         {apptsLoading ? <ActivityIndicator color="#0a7ea4" style={{marginTop: 20}} /> : (
                             <>
+                                {/* Actions toolbar: generate report (left) + voice + add plan (right) */}
+                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                                    <Pressable onPress={openReportPreview} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#E0F2FE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: '#BAE6FD' }}>
+                                        <Ionicons name="download-outline" size={18} color="#0a7ea4" />
+                                        <ThemedText style={{ color: '#0a7ea4', fontWeight: '600' }}>Generate Report</ThemedText>
+                                    </Pressable>
+                                    <Pressable onPress={openVoiceModal} hitSlop={10}>
+                                        <Ionicons name="mic-circle" size={28} color="#0a7ea4" />
+                                    </Pressable>
+                                    <Pressable onPress={() => setPlanModalVisible(true)} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#E0F2FE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 }}>
+                                        <Ionicons name="calendar-outline" size={18} color="#0a7ea4" />
+                                        <ThemedText style={{ color: '#0a7ea4', fontWeight: '600' }}>Add Plan</ThemedText>
+                                    </Pressable>
+                                </View>
                                 {upcomingAppts.length > 0 && (
                                     <View style={styles.sectionHeader}>
                                         <ThemedText style={styles.sectionTitle}>Upcoming</ThemedText>
-                                        <Pressable onPress={openVoiceModal} hitSlop={10}>
-                                            <Ionicons name="mic-circle" size={28} color="#0a7ea4" />
-                                        </Pressable>
                                     </View>
                                 )}
                                 {upcomingAppts.map(appt => (
-                                    <AppointmentCard key={appt._id} appointment={appt} onEdit={openEdit} onDelete={confirmDeleteAppt} onToggleStatus={toggleStatus} />
+                                    <AppointmentCard key={appt._id} appointment={appt} onEdit={openEdit} onDelete={confirmDeleteAppt} onToggleStatus={toggleStatus} onAddNote={openNoteModal} onPress={openApptNotes} />
                                 ))}
                                 {pastAppts.length > 0 && <View style={[styles.sectionHeader, { marginTop: 24 }]}><ThemedText style={styles.sectionTitle}>Past</ThemedText></View>}
                                 {pastAppts.map(appt => (
-                                    <AppointmentCard key={appt._id} appointment={appt} onEdit={openEdit} onDelete={confirmDeleteAppt} onToggleStatus={toggleStatus} />
+                                    <AppointmentCard key={appt._id} appointment={appt} onEdit={openEdit} onDelete={confirmDeleteAppt} onToggleStatus={toggleStatus} onAddNote={openNoteModal} onPress={openApptNotes} />
                                 ))}
                                 {appts.length === 0 && (
                                     <View style={styles.centeredMessage}><ThemedText>No appointments scheduled.</ThemedText></View>
@@ -521,6 +782,63 @@ export default function PatientDetailsScreen() {
                     </>
                 )}
             </ScrollView>
+
+            {/* Quick Note Modal */}
+            <Modal visible={noteModalVisible} animationType="fade" transparent onRequestClose={closeNoteModal}>
+                <Pressable style={styles.modalOverlay} onPress={closeNoteModal}>
+                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={100} style={{ width: '100%', alignItems: 'center' }}>
+                        <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+                            <ThemedText style={styles.modalTitle}>Quick Note</ThemedText>
+                            <View style={[styles.inputContainer, { minHeight: 100 }] }>
+                                <Ionicons name="document-text-outline" size={20} color="#64748B" />
+                                <TextInput
+                                    style={[styles.inputText, { minHeight: 100, textAlignVertical: 'top' }]}
+                                    placeholder="Type a note or use the mic"
+                                    placeholderTextColor="#94A3B8"
+                                    value={noteText}
+                                    onChangeText={setNoteText}
+                                    multiline
+                                    editable={!noteIsTranscribing}
+                                />
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                                <TouchableOpacity onPress={startNoteRecording} disabled={noteIsRecording || noteIsTranscribing} style={[styles.voiceActionBtn, noteIsRecording && { opacity: 0.7 }]}>
+                                    <Ionicons name="mic" size={22} color="#fff" />
+                                    
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={stopAndTranscribeNote} disabled={!noteIsRecording || noteIsTranscribing} style={[styles.voiceActionBtnSecondary, (!noteIsRecording || noteIsTranscribing) && { opacity: 0.6 }]}>
+                                    <Ionicons name="stop" size={20} color="#0a7ea4" />
+                                    <ThemedText style={styles.voiceActionTextSecondary}>{noteIsTranscribing ? 'Transcribing…' : 'Stop'}</ThemedText>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.modalButtonContainer}>
+                                <TouchableOpacity onPress={closeNoteModal} style={[styles.modalBtn, styles.modalBtnSecondary]}>
+                                    <ThemedText style={styles.modalBtnTextSecondary}>Cancel</ThemedText>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={saveNote} disabled={noteSaving} style={[styles.modalBtn, styles.modalBtnPrimary]}>
+                                    <ThemedText style={styles.modalBtnTextPrimary}>{noteSaving ? 'Saving…' : 'Save Note'}</ThemedText>
+                                </TouchableOpacity>
+                            </View>
+                        </Pressable>
+                    </KeyboardAvoidingView>
+                </Pressable>
+            </Modal>
+
+            {/* In-app Report Preview Modal */}
+            <Modal visible={reportPreviewVisible} animationType="slide" onRequestClose={() => setReportPreviewVisible(false)}>
+                <View style={styles.previewContainer}>
+                    <View style={styles.previewHeader}>
+                        <TouchableOpacity onPress={() => setReportPreviewVisible(false)} hitSlop={10} style={{ padding: 6 }}>
+                            <Ionicons name="close" size={22} color="#FFFFFF" />
+                        </TouchableOpacity>
+                        <ThemedText style={styles.previewHeaderTitle}>Patient Report</ThemedText>
+                        <TouchableOpacity onPress={downloadReportPdf} hitSlop={10} style={{ padding: 6 }}>
+                            <Ionicons name="download-outline" size={22} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </View>
+                    <WebView originWhitelist={["*"]} source={{ html: reportHtml }} style={styles.webview} startInLoadingState />
+                </View>
+            </Modal>
 
             {/* Voice Bottom Sheet */}
             <Modal visible={voiceModalVisible} animationType="slide" transparent onRequestClose={closeVoiceModal}>
@@ -623,6 +941,67 @@ export default function PatientDetailsScreen() {
                         </View>
                         </ScrollView>
                     </Pressable>
+                    </KeyboardAvoidingView>
+                </Pressable>
+            </Modal>
+
+            {/* Add Plan Modal */}
+            <Modal visible={planModalVisible} animationType="fade" transparent onRequestClose={() => setPlanModalVisible(false)}>
+                <Pressable style={styles.modalOverlay} onPress={() => setPlanModalVisible(false)}>
+                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80} style={{ width: '100%', alignItems: 'center' }}>
+                        <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+                            <ThemedText style={styles.modalTitle}>Add Plan</ThemedText>
+                            <ThemedText style={styles.modalSectionLabel}>Choose a plan to schedule multiple appointments</ThemedText>
+                            <View style={{ gap: 10, marginTop: 6 }}>
+                                {[
+                                    { key: 'immunization', label: 'Immunization Plan' },
+                                    { key: 'pregnancy', label: 'Pregnancy Plan' },
+                                    { key: 'family_planning', label: 'Family Planning Plan' },
+                                    { key: 'nutrition', label: 'Nutrition Support Plan' },
+                                    { key: 'tb', label: 'TB Treatment Plan' },
+                                    { key: 'ncd', label: 'NCD Management Plan' },
+                                ].map(p => (
+                                    <TouchableOpacity
+                                        key={p.key}
+                                        disabled={planApplying}
+                                        onPress={async () => {
+                                            try {
+                                                setPlanApplying(true);
+                                                const res = await fetch(`${API_BASE}/api/patients/${id}/plans/${p.key}/apply`, {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({})
+                                                });
+                                                if (!res.ok) {
+                                                    const err = await res.text();
+                                                    throw new Error(err || 'Failed');
+                                                }
+                                                await loadAppointments();
+                                                setPlanModalVisible(false);
+                                                Alert.alert('Plan applied', `${p.label} has been scheduled.`);
+                                            } catch (e) {
+                                                console.error('Apply plan failed', e?.message);
+                                                Alert.alert('Error', 'Failed to apply plan.');
+                                            } finally {
+                                                setPlanApplying(false);
+                                            }
+                                        }}
+                                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#F1F5F9', paddingHorizontal: 12, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' }}
+                                    >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                            <Ionicons name="albums-outline" size={18} color="#0a7ea4" />
+                                            <ThemedText style={{ color: '#0f172a', fontWeight: '600' }}>{p.label}</ThemedText>
+                                        </View>
+                                        <Ionicons name="chevron-forward" size={18} color="#64748B" />
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                            <View style={[styles.modalButtonContainer, { marginTop: 16 }]}>
+                                <TouchableOpacity onPress={() => setPlanModalVisible(false)} style={[styles.modalBtn, styles.modalBtnSecondary]}>
+                                    <ThemedText style={styles.modalBtnTextSecondary}>Close</ThemedText>
+                                </TouchableOpacity>
+                            </View>
+                        </Pressable>
                     </KeyboardAvoidingView>
                 </Pressable>
             </Modal>
@@ -813,6 +1192,7 @@ const styles = StyleSheet.create({
     modalBtnSecondary: { backgroundColor: '#E2E8F0' },
     modalBtnTextPrimary: { color: '#FFFFFF', fontWeight: 'bold' },
     modalBtnTextSecondary: { color: '#334155', fontWeight: 'bold' },
+    detailsTitle: { color : '#000000'},
     // Voice sheet styles
     voiceSheet: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#FFFFFF', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '85%' },
     voiceSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
@@ -828,4 +1208,9 @@ const styles = StyleSheet.create({
     jsonBox: { marginTop: 12, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, padding: 10, backgroundColor: '#F8FAFC' },
     jsonText: { color: '#334155', fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), fontSize: 12 },
     patientRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+    // Preview modal styles
+    previewContainer: { flex: 1, backgroundColor: '#FFFFFF' },
+    previewHeader: { height: 48, backgroundColor: '#0c4a6e', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12 },
+    previewHeaderTitle: { color: '#FFFFFF', fontWeight: '600' },
+    webview: { flex: 1 }
 });

@@ -5,6 +5,9 @@ import axios from 'axios';
 import mongoose from 'mongoose';
 import Patient from './models/Patient.js';
 import Appointment from './models/Appointment.js';
+import referencePlans from './plans/referencePlans.js';
+import BirthRecord from './models/BirthRecord.js';
+import DeathRecord from './models/DeathRecord.js';
 
 // Load environment variables
 dotenv.config();
@@ -426,6 +429,29 @@ app.patch('/api/appointments/:id', async (req, res) => {
   }
 });
 
+// Update only the notes field for a given appointment
+app.patch('/api/appointments/:id/notes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body || {};
+
+    if (notes != null && typeof notes !== 'string') {
+      return res.status(400).json({ error: 'notes must be a string if provided.' });
+    }
+
+    const appt = await Appointment.findByIdAndUpdate(
+      id,
+      { $set: { notes: notes?.trim?.() ?? '' } },
+      { new: true }
+    );
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+    res.status(200).json(appt);
+  } catch (error) {
+    console.error('Error updating appointment notes:', error);
+    res.status(500).json({ error: 'Failed to update appointment notes.' });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
@@ -440,4 +466,253 @@ app.listen(PORT, () => {
   console.log(`🚀 ASHA Voice Assistant Backend running at http://localhost:${PORT}`);
   console.log(`🧠 Command processing endpoint: POST /api/process-command`);
   console.log(`⚡ Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// =====================
+// Plans -> Bulk create appointments
+// =====================
+app.post('/api/patients/:id/plans/:planKey/apply', async (req, res) => {
+  try {
+    const { id, planKey } = req.params;
+    const { startDate, hospital } = req.body || {};
+
+    // Validate patient exists
+    try {
+      const p = await Patient.findById(id);
+      if (!p) return res.status(404).json({ error: 'Patient not found.' });
+    } catch (e) {
+      if (e?.name === 'CastError') return res.status(400).json({ error: 'Invalid patientId.' });
+    }
+
+    const plan = referencePlans?.[planKey];
+    if (!plan) return res.status(404).json({ error: 'Plan not found.' });
+
+    // Compute base date (noon to avoid TZ off-by-one in lists)
+    const base = startDate ? new Date(startDate) : new Date();
+    if (isNaN(base.getTime())) return res.status(400).json({ error: 'Invalid startDate.' });
+    base.setHours(12, 0, 0, 0);
+
+    const docs = (plan.steps || []).map(step => {
+      const d = new Date(base);
+      d.setDate(d.getDate() + (step.offsetDays || 0));
+      return {
+        name: step.name,
+        patientId: id,
+        date: d,
+        status: 'scheduled',
+        program: plan.label || plan.key,
+        hospital: typeof hospital === 'string' ? hospital : undefined,
+        desc: step.desc || undefined,
+      };
+    });
+
+    if (!docs.length) return res.status(400).json({ error: 'Plan has no steps.' });
+
+    // Insert many appointments
+    const created = await Appointment.insertMany(docs);
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('Apply plan failed:', error);
+    res.status(500).json({ error: 'Failed to apply plan.' });
+  }
+});
+
+// =====================
+// Birth records CRUD
+// =====================
+app.post('/api/births', async (req, res) => {
+  try {
+    const {
+      mother_patient_id,
+      birth_date,
+      birth_time,
+      birth_outcome,
+      infant_sex,
+      infant_weight_kg,
+      place_of_delivery,
+    } = req.body || {};
+
+    if (!mother_patient_id || !birth_date) {
+      return res.status(400).json({ error: 'mother_patient_id and birth_date are required.' });
+    }
+
+    // Validate mother and infant ids
+    try {
+      const mom = await Patient.findById(mother_patient_id);
+      if (!mom) return res.status(404).json({ error: 'Mother patient not found.' });
+    } catch (e) {
+      if (e?.name === 'CastError') return res.status(400).json({ error: 'Invalid mother_patient_id.' });
+    }
+    const doc = await BirthRecord.create({
+      mother_patient_id,
+      birth_date: new Date(birth_date),
+      birth_time: birth_time ? String(birth_time).trim() : undefined,
+      birth_outcome: birth_outcome ? String(birth_outcome).trim() : undefined,
+      infant_sex: infant_sex || 'unknown',
+      infant_weight_kg: typeof infant_weight_kg === 'number' ? infant_weight_kg : (infant_weight_kg ? Number(infant_weight_kg) : undefined),
+      place_of_delivery: place_of_delivery ? String(place_of_delivery).trim() : undefined,
+    });
+    res.status(201).json(doc);
+  } catch (error) {
+    console.error('Create birth record failed:', error);
+    res.status(500).json({ error: 'Failed to create birth record.' });
+  }
+});
+
+app.patch('/api/births/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body };
+    if (updates.birth_date != null) updates.birth_date = new Date(updates.birth_date);
+    if (updates.birth_time != null) updates.birth_time = String(updates.birth_time).trim();
+    if (updates.birth_outcome != null) updates.birth_outcome = String(updates.birth_outcome).trim();
+    if (updates.place_of_delivery != null) updates.place_of_delivery = String(updates.place_of_delivery).trim();
+    if (updates.infant_weight_kg != null) updates.infant_weight_kg = Number(updates.infant_weight_kg);
+
+    // Validate referenced patients if modified
+    if (updates.mother_patient_id) {
+      try {
+        const mom = await Patient.findById(updates.mother_patient_id);
+        if (!mom) return res.status(404).json({ error: 'Mother patient not found.' });
+      } catch (e) {
+        if (e?.name === 'CastError') return res.status(400).json({ error: 'Invalid mother_patient_id.' });
+      }
+    }
+    const doc = await BirthRecord.findByIdAndUpdate(id, { $set: updates }, { new: true });
+    if (!doc) return res.status(404).json({ error: 'Birth record not found.' });
+    res.json(doc);
+  } catch (error) {
+    console.error('Update birth record failed:', error);
+    res.status(500).json({ error: 'Failed to update birth record.' });
+  }
+});
+
+app.delete('/api/births/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await BirthRecord.findByIdAndDelete(id);
+    if (!result) return res.status(404).json({ error: 'Birth record not found.' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete birth record failed:', error);
+    res.status(500).json({ error: 'Failed to delete birth record.' });
+  }
+});
+
+// List births
+app.get('/api/births', async (req, res) => {
+  try {
+    const { mother_patient_id, limit } = req.query || {};
+    const q = {};
+    if (mother_patient_id) q.mother_patient_id = mother_patient_id;
+    const lim = Math.max(0, Math.min(Number(limit) || 0, 200));
+    const cursor = BirthRecord.find(q).sort({ birth_date: -1, createdAt: -1 });
+    if (lim) cursor.limit(lim);
+    const list = await cursor.lean();
+    res.json(list);
+  } catch (error) {
+    console.error('List births failed:', error);
+    res.status(500).json({ error: 'Failed to list birth records.' });
+  }
+});
+
+// =====================
+// Death records CRUD
+// =====================
+app.post('/api/deaths', async (req, res) => {
+  try {
+    const {
+      deceased_patient_id,
+      death_date,
+      death_time,
+      place_of_death,
+      reported_cause_of_death,
+      is_maternal_death,
+      is_infant_death,
+    } = req.body || {};
+
+    if (!deceased_patient_id || !death_date) {
+      return res.status(400).json({ error: 'deceased_patient_id and death_date are required.' });
+    }
+
+    // Validate patient id
+    try {
+      const p = await Patient.findById(deceased_patient_id);
+      if (!p) return res.status(404).json({ error: 'Deceased patient not found.' });
+    } catch (e) {
+      if (e?.name === 'CastError') return res.status(400).json({ error: 'Invalid deceased_patient_id.' });
+    }
+
+    const doc = await DeathRecord.create({
+      deceased_patient_id,
+      death_date: new Date(death_date),
+      death_time: death_time ? String(death_time).trim() : undefined,
+      place_of_death: place_of_death ? String(place_of_death).trim() : undefined,
+      reported_cause_of_death: reported_cause_of_death ? String(reported_cause_of_death).trim() : undefined,
+      is_maternal_death: Boolean(is_maternal_death),
+      is_infant_death: Boolean(is_infant_death),
+    });
+    res.status(201).json(doc);
+  } catch (error) {
+    console.error('Create death record failed:', error);
+    res.status(500).json({ error: 'Failed to create death record.' });
+  }
+});
+
+app.patch('/api/deaths/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body };
+    if (updates.death_date != null) updates.death_date = new Date(updates.death_date);
+    if (updates.death_time != null) updates.death_time = String(updates.death_time).trim();
+    if (updates.place_of_death != null) updates.place_of_death = String(updates.place_of_death).trim();
+    if (updates.reported_cause_of_death != null) updates.reported_cause_of_death = String(updates.reported_cause_of_death).trim();
+    if (updates.is_maternal_death != null) updates.is_maternal_death = Boolean(updates.is_maternal_death);
+    if (updates.is_infant_death != null) updates.is_infant_death = Boolean(updates.is_infant_death);
+
+    if (updates.deceased_patient_id) {
+      try {
+        const p = await Patient.findById(updates.deceased_patient_id);
+        if (!p) return res.status(404).json({ error: 'Deceased patient not found.' });
+      } catch (e) {
+        if (e?.name === 'CastError') return res.status(400).json({ error: 'Invalid deceased_patient_id.' });
+      }
+    }
+
+    const doc = await DeathRecord.findByIdAndUpdate(id, { $set: updates }, { new: true });
+    if (!doc) return res.status(404).json({ error: 'Death record not found.' });
+    res.json(doc);
+  } catch (error) {
+    console.error('Update death record failed:', error);
+    res.status(500).json({ error: 'Failed to update death record.' });
+  }
+});
+
+app.delete('/api/deaths/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await DeathRecord.findByIdAndDelete(id);
+    if (!result) return res.status(404).json({ error: 'Death record not found.' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete death record failed:', error);
+    res.status(500).json({ error: 'Failed to delete death record.' });
+  }
+});
+
+// List deaths
+app.get('/api/deaths', async (req, res) => {
+  try {
+    const { deceased_patient_id, limit } = req.query || {};
+    const q = {};
+    if (deceased_patient_id) q.deceased_patient_id = deceased_patient_id;
+    const lim = Math.max(0, Math.min(Number(limit) || 0, 200));
+    const cursor = DeathRecord.find(q).sort({ death_date: -1, createdAt: -1 });
+    if (lim) cursor.limit(lim);
+    const list = await cursor.lean();
+    res.json(list);
+  } catch (error) {
+    console.error('List deaths failed:', error);
+    res.status(500).json({ error: 'Failed to list death records.' });
+  }
 });
